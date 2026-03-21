@@ -246,18 +246,41 @@ def _find_blackhole_input_index() -> int | None:
             return i
     return None
 
+def _is_teams_in_call() -> bool:
+    """Detect if Microsoft Teams is currently in a call by checking UDP connections.
+    When in a call, Teams opens additional UDP connections for RTP media streams
+    beyond its usual signaling port.
+    """
+    try:
+        result = subprocess.run(
+            ["lsof", "-i", "UDP", "-a", "-c", "MSTeams"],
+            capture_output=True, text=True, timeout=5
+        )
+        # Count UDP connections - during a call there are more than 1
+        udp_lines = [l for l in result.stdout.strip().split('\n')
+                      if l and not l.startswith('COMMAND')]
+        return len(udp_lines) > 1
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+CHUNK_SECONDS = 10  # Record in 10-second chunks
+
 @mcp.tool()
-async def record_meeting(duration: float = 300, name: str = "meeting") -> str:
-    """Record a meeting. Automatically switches audio output to capture system audio via BlackHole,
-    records for the specified duration, then restores the original audio output.
+async def record_meeting(duration: float = 7200, name: str = "meeting", auto_stop: bool = True) -> str:
+    """Record a meeting. Automatically switches audio output to capture system audio via BlackHole.
+
+    When auto_stop is True (default), recording automatically stops when you leave the Teams meeting.
+    When auto_stop is False, it records for the specified duration.
 
     Args:
-        duration: Recording duration in seconds (default: 300 = 5 minutes)
+        duration: Maximum recording duration in seconds (default: 7200 = 2 hours)
         name: Name for the recording file (default: "meeting")
+        auto_stop: If True, automatically stop when Teams call ends (default: True)
 
     Returns:
         A message with the path to the saved recording
     """
+    original_output = ""
     try:
         # Find BlackHole input device
         bh_index = _find_blackhole_input_index()
@@ -270,8 +293,53 @@ async def record_meeting(duration: float = 300, name: str = "meeting") -> str:
         if not switched:
             return "Error: Could not switch to Multi-Output Device. Make sure it is configured in Audio MIDI Setup."
 
-        try:
-            # Record via BlackHole
+        if auto_stop:
+            # Wait for Teams call to start (if not already in one)
+            if not _is_teams_in_call():
+                # Give a short grace period for the call to start
+                for _ in range(30):  # Wait up to 5 minutes
+                    await asyncio.sleep(10)
+                    if _is_teams_in_call():
+                        break
+                else:
+                    if original_output:
+                        _switch_audio_output(original_output)
+                    return "Timed out waiting for Teams call to start. No call detected in 5 minutes."
+
+            # Record in chunks, checking call status between each
+            all_chunks = []
+            total_recorded = 0.0
+
+            while total_recorded < duration:
+                chunk = sd.rec(
+                    int(CHUNK_SECONDS * DEFAULT_SAMPLE_RATE),
+                    samplerate=DEFAULT_SAMPLE_RATE,
+                    channels=2,
+                    device=bh_index
+                )
+                sd.wait()
+                all_chunks.append(chunk)
+                total_recorded += CHUNK_SECONDS
+
+                # Check if still in call
+                if not _is_teams_in_call():
+                    # Record one more chunk to capture final moments
+                    chunk = sd.rec(
+                        int(CHUNK_SECONDS * DEFAULT_SAMPLE_RATE),
+                        samplerate=DEFAULT_SAMPLE_RATE,
+                        channels=2,
+                        device=bh_index
+                    )
+                    sd.wait()
+                    all_chunks.append(chunk)
+                    total_recorded += CHUNK_SECONDS
+                    break
+
+            # Concatenate all chunks
+            recording = np.concatenate(all_chunks, axis=0)
+
+        else:
+            # Fixed duration recording
             recording = sd.rec(
                 int(duration * DEFAULT_SAMPLE_RATE),
                 samplerate=DEFAULT_SAMPLE_RATE,
@@ -279,30 +347,28 @@ async def record_meeting(duration: float = 300, name: str = "meeting") -> str:
                 device=bh_index
             )
             sd.wait()
+            total_recorded = duration
 
-            # Save recording
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            safe_name = "".join(c if c.isalnum() or c in "-_ " else "_" for c in name)
-            save_path = str(RECORDINGS_DIR / f"{safe_name}_{timestamp}.wav")
+        # Save recording
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_name = "".join(c if c.isalnum() or c in "-_ " else "_" for c in name)
+        save_path = str(RECORDINGS_DIR / f"{safe_name}_{timestamp}.wav")
 
-            with wave.open(save_path, 'wb') as wf:
-                wf.setnchannels(2)
-                wf.setsampwidth(2)
-                wf.setframerate(DEFAULT_SAMPLE_RATE)
-                wf.writeframes((recording * 32767).astype(np.int16).tobytes())
+        with wave.open(save_path, 'wb') as wf:
+            wf.setnchannels(2)
+            wf.setsampwidth(2)
+            wf.setframerate(DEFAULT_SAMPLE_RATE)
+            wf.writeframes((recording * 32767).astype(np.int16).tobytes())
 
-            return f"Recording complete! Saved to {save_path} ({duration} seconds). Open with: open \"{save_path}\""
-
-        finally:
-            # Restore original audio output
-            if original_output:
-                _switch_audio_output(original_output)
+        minutes = total_recorded / 60
+        return f"Recording complete! {minutes:.1f} minutes saved to {save_path}. Open with: open \"{save_path}\""
 
     except Exception as e:
-        # Try to restore output even on error
+        return f"Error recording meeting: {str(e)}"
+    finally:
+        # Always restore original audio output
         if original_output:
             _switch_audio_output(original_output)
-        return f"Error recording meeting: {str(e)}"
 
 if __name__ == "__main__":
     # Initialize and run the server
