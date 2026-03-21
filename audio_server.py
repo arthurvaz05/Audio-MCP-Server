@@ -9,7 +9,13 @@ import soundfile as sf
 import numpy as np
 import tempfile
 import wave
+import datetime
+from pathlib import Path
 from mcp.server.fastmcp import FastMCP
+
+# Directory to save recordings
+RECORDINGS_DIR = Path.home() / "Recordings"
+RECORDINGS_DIR.mkdir(exist_ok=True)
 
 # Initialize FastMCP server
 mcp = FastMCP("audio-interface")
@@ -82,31 +88,29 @@ async def record_audio(duration: float = DEFAULT_DURATION,
         # Wait for the recording to complete
         sd.wait()
         
-        # Generate a temp file for storage
-        fd, temp_path = tempfile.mkstemp(suffix='.wav')
-        try:
-            with wave.open(temp_path, 'wb') as wf:
-                wf.setnchannels(channels)
-                wf.setsampwidth(2)  # 16-bit
-                wf.setframerate(sample_rate)
-                wf.writeframes((recording * 32767).astype(np.int16).tobytes())
-            
-            # Encode the file for storage
-            with open(temp_path, 'rb') as f:
-                encoded_audio = base64.b64encode(f.read()).decode('utf-8')
-                
-            # Store the audio in a global variable for later playback
-            global latest_recording
-            latest_recording = {
-                'audio_data': encoded_audio,
-                'sample_rate': sample_rate,
-                'channels': channels
-            }
-            
-            return f"Successfully recorded {duration} seconds of audio. Use play_latest_recording tool to play it back."
-        finally:
-            os.close(fd)
-            os.unlink(temp_path)
+        # Save recording to file
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        save_path = str(RECORDINGS_DIR / f"recording_{timestamp}.wav")
+
+        with wave.open(save_path, 'wb') as wf:
+            wf.setnchannels(channels)
+            wf.setsampwidth(2)  # 16-bit
+            wf.setframerate(sample_rate)
+            wf.writeframes((recording * 32767).astype(np.int16).tobytes())
+
+        # Encode for in-memory playback
+        with open(save_path, 'rb') as f:
+            encoded_audio = base64.b64encode(f.read()).decode('utf-8')
+
+        # Store the audio in a global variable for later playback
+        global latest_recording
+        latest_recording = {
+            'audio_data': encoded_audio,
+            'sample_rate': sample_rate,
+            'channels': channels
+        }
+
+        return f"Successfully recorded {duration} seconds of audio. Saved to {save_path}. Use play_audio_file to play it back on a specific device."
             
     except Exception as e:
         return f"Error recording audio: {str(e)}"
