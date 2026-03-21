@@ -370,6 +370,46 @@ async def record_meeting(duration: float = 7200, name: str = "meeting", auto_sto
         if original_output:
             _switch_audio_output(original_output)
 
+@mcp.tool()
+async def transcribe_audio(file_path: str, language: str = "pt") -> str:
+    """Transcribe an audio file to text using Whisper (runs locally).
+
+    Args:
+        file_path: Path to the audio file (WAV, MP3, etc.)
+        language: Language code (default: "pt" for Portuguese). Use "en" for English.
+
+    Returns:
+        The full transcription text with timestamps.
+    """
+    try:
+        if not os.path.exists(file_path):
+            return f"Error: File not found at {file_path}"
+
+        from faster_whisper import WhisperModel
+
+        # Use base model for speed/quality balance. Downloads on first use.
+        model = WhisperModel("base", device="cpu", compute_type="int8")
+
+        segments, info = model.transcribe(file_path, language=language)
+
+        lines = []
+        for segment in segments:
+            start_min = int(segment.start // 60)
+            start_sec = int(segment.start % 60)
+            lines.append(f"[{start_min:02d}:{start_sec:02d}] {segment.text.strip()}")
+
+        transcript = "\n".join(lines)
+
+        # Save transcript to file alongside the audio
+        transcript_path = file_path.rsplit('.', 1)[0] + '_transcript.txt'
+        with open(transcript_path, 'w', encoding='utf-8') as f:
+            f.write(transcript)
+
+        return f"Transcription complete ({info.language}, {info.duration:.0f}s). Saved to {transcript_path}\n\n{transcript}"
+
+    except Exception as e:
+        return f"Error transcribing audio: {str(e)}"
+
 if __name__ == "__main__":
     # Initialize and run the server
     mcp.run(transport='stdio')
