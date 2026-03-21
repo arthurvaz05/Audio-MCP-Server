@@ -4,6 +4,7 @@ import base64
 import io
 import json
 import os
+import subprocess
 import sounddevice as sd
 import soundfile as sf
 import numpy as np
@@ -213,6 +214,95 @@ async def play_audio_file(file_path: str, device_index: int = None) -> str:
         return f"Successfully played audio file: {file_path}"
     except Exception as e:
         return f"Error playing audio file: {str(e)}"
+
+def _switch_audio_output(device_name: str) -> bool:
+    """Switch macOS audio output device using SwitchAudioSource."""
+    try:
+        subprocess.run(
+            ["SwitchAudioSource", "-s", device_name, "-t", "output"],
+            check=True, capture_output=True, text=True
+        )
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+def _get_current_output() -> str:
+    """Get current macOS audio output device name."""
+    try:
+        result = subprocess.run(
+            ["SwitchAudioSource", "-c", "-t", "output"],
+            capture_output=True, text=True, check=True
+        )
+        return result.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return ""
+
+def _find_blackhole_input_index() -> int | None:
+    """Find the BlackHole 2ch input device index."""
+    devices = sd.query_devices()
+    input_devices = [d for d in devices if d['max_input_channels'] > 0]
+    for i, d in enumerate(input_devices):
+        if 'BlackHole' in d['name']:
+            return i
+    return None
+
+@mcp.tool()
+async def record_meeting(duration: float = 300, name: str = "meeting") -> str:
+    """Record a meeting. Automatically switches audio output to capture system audio via BlackHole,
+    records for the specified duration, then restores the original audio output.
+
+    Args:
+        duration: Recording duration in seconds (default: 300 = 5 minutes)
+        name: Name for the recording file (default: "meeting")
+
+    Returns:
+        A message with the path to the saved recording
+    """
+    try:
+        # Find BlackHole input device
+        bh_index = _find_blackhole_input_index()
+        if bh_index is None:
+            return "Error: BlackHole 2ch not found. Install it with: brew install blackhole-2ch"
+
+        # Save current output device and switch to Multi-Output Device
+        original_output = _get_current_output()
+        switched = _switch_audio_output("Multi-Output Device")
+        if not switched:
+            return "Error: Could not switch to Multi-Output Device. Make sure it is configured in Audio MIDI Setup."
+
+        try:
+            # Record via BlackHole
+            recording = sd.rec(
+                int(duration * DEFAULT_SAMPLE_RATE),
+                samplerate=DEFAULT_SAMPLE_RATE,
+                channels=2,
+                device=bh_index
+            )
+            sd.wait()
+
+            # Save recording
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_name = "".join(c if c.isalnum() or c in "-_ " else "_" for c in name)
+            save_path = str(RECORDINGS_DIR / f"{safe_name}_{timestamp}.wav")
+
+            with wave.open(save_path, 'wb') as wf:
+                wf.setnchannels(2)
+                wf.setsampwidth(2)
+                wf.setframerate(DEFAULT_SAMPLE_RATE)
+                wf.writeframes((recording * 32767).astype(np.int16).tobytes())
+
+            return f"Recording complete! Saved to {save_path} ({duration} seconds). Open with: open \"{save_path}\""
+
+        finally:
+            # Restore original audio output
+            if original_output:
+                _switch_audio_output(original_output)
+
+    except Exception as e:
+        # Try to restore output even on error
+        if original_output:
+            _switch_audio_output(original_output)
+        return f"Error recording meeting: {str(e)}"
 
 if __name__ == "__main__":
     # Initialize and run the server
