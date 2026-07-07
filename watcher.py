@@ -113,9 +113,15 @@ def main() -> None:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     logger.info("meeting watcher started (poll every %ss)", POLL_SECONDS)
-    while True:
+    positives = 0  # consecutive polls seeing a call — Teams blips open sockets
+    while True:    # for ~10s without a real call; require 2 (~20s) to start
         try:
-            if not recorder.LOCK_FILE.exists() and recorder.is_teams_in_call():
+            if recorder.LOCK_FILE.exists() or not recorder.is_teams_in_call():
+                positives = 0
+            else:
+                positives += 1
+            if positives >= 2:
+                positives = 0
                 name = "reuniao_" + datetime.datetime.now().strftime("%Y-%m-%d_%H%M")
                 rec = recorder.MeetingRecorder(name=name, auto_stop=True)
                 error = rec.start()
@@ -131,10 +137,14 @@ def main() -> None:
                 rec.join()  # recording auto-stops when the call ends
                 st = rec.status()
                 logger.info("recording finished: %s", st)
-                if st["state"] == "done" and st["seconds"] > 30:
+                if st["state"] == "done" and st["seconds"] > 60:
                     # ponytail: pipeline inline — watcher pausa o polling durante
                     # transcricao/ata (reunioes simultaneas nao existem p/ 1 pessoa)
                     process_recording(str(rec.wav_path), st["seconds"])
+                elif st["state"] == "done":
+                    # blip/entrada-e-saida: sem conteudo de reuniao — descartar quieto
+                    logger.info("short recording (%.0fs) discarded", st["seconds"])
+                    os.unlink(rec.wav_path)
                 elif st["state"] == "error":
                     notify(f"Gravação falhou: {(st['error'] or '')[:80]}")
         except Exception:
