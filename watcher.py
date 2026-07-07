@@ -8,6 +8,7 @@ LaunchAgent (com.monkai.meeting-watcher).
 import datetime
 import logging
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -19,6 +20,8 @@ VENV_PYTHON = "/Users/arthurvaz/Audio-MCP-Server/.venv/bin/python3"
 CLAUDE_BIN = "/Users/arthurvaz/.local/bin/claude"
 ATAS_DIR = "/Users/arthurvaz/Desktop/Monkai/Assistente/data/atas"
 EMAIL_TO = "arthur.vaz@monkai.com.br"
+ATAS_MEMORY = "/Users/arthurvaz/Desktop/Monkai/Assistente/scripts/atas_memory.py"
+ASSISTENTE_PY = "/Users/arthurvaz/Desktop/Monkai/Assistente/.venv/bin/python3"
 
 logger = logging.getLogger("watcher")
 
@@ -63,9 +66,10 @@ def transcribe(wav_path: str) -> str | None:
     return transcript_path
 
 
-def generate_ata(transcript_path: str, wav_name: str, minutes: float) -> bool:
+def generate_ata(transcript_path: str, wav_name: str, minutes: float) -> str | None:
     """Headless Claude: name the meeting from the ms365 calendar, write the
-    ata and email it. Returns True on success."""
+    ata (with YAML frontmatter) and email it. Returns the ata file path on
+    success, or None on failure."""
     prompt = f"""Voce e o assistente do Arthur. Uma reuniao acabou de ser gravada e transcrita automaticamente.
 
 Transcript: {transcript_path} (gravacao {wav_name}, {minutes:.0f} min — o timestamp YYYYMMDD_HHMMSS no nome do arquivo e o inicio da gravacao).
@@ -73,9 +77,18 @@ Transcript: {transcript_path} (gravacao {wav_name}, {minutes:.0f} min — o time
 Faca, sem pedir confirmacao:
 1. Leia o transcript.
 2. Busque no calendario ms365 (mcp__ms365__get-calendar-view) o evento que cobre o horario da gravacao; se achar, use o titulo dele como nome da reuniao; senao use "Reuniao" + data/hora.
-3. Escreva a ata em portugues (data/hora, participantes se identificaveis, resumo, pontos discutidos, decisoes, action items com responsaveis, proximos passos) e salve em {ATAS_DIR}/YYYY-MM-DD_<nome-curto>.md.
+3. Escreva a ata em portugues e salve em {ATAS_DIR}/YYYY-MM-DD_<nome-curto>.md, comecando OBRIGATORIAMENTE com frontmatter YAML:
+---
+titulo: <titulo do evento ou "Reuniao">
+data: <YYYY-MM-DD HH:MM do inicio da gravacao>
+cliente: <vivo|nestle|unidas|interno|outro>
+produto: <produto MonkAI relacionado ou "geral">
+participantes: [<nomes identificaveis no transcript>]
+tags: [<3-8 tags do assunto>]
+---
+Depois do frontmatter: data/hora, resumo, pontos discutidos, decisoes, action items com responsaveis, proximos passos.
 4. Envie a ata por email para {EMAIL_TO} via mcp__ms365__send-mail — assunto "Ata de Reuniao - <nome> - DD/MM/AAAA", corpo HTML bem formatado.
-5. Responda apenas OK ou o erro."""
+5. Responda APENAS com o caminho absoluto do arquivo da ata salvo (nada mais)."""
     try:
         result = subprocess.run(
             [CLAUDE_BIN, "-p", prompt, "--allowedTools",
@@ -85,10 +98,13 @@ Faca, sem pedir confirmacao:
             env={**os.environ, "PATH": os.environ.get("PATH", "") + ":/Users/arthurvaz/.local/bin"},
         )
         logger.info("claude ata run (rc=%d): %s", result.returncode, result.stdout[-300:])
-        return result.returncode == 0
+        if result.returncode != 0:
+            return None
+        m = re.search(r"(/\S+\.md)", result.stdout)
+        return m.group(1) if m else None
     except subprocess.TimeoutExpired:
         logger.error("claude ata run timed out")
-        return False
+        return None
 
 
 def process_recording(wav_path: str, seconds: float) -> None:
@@ -100,7 +116,14 @@ def process_recording(wav_path: str, seconds: float) -> None:
         return
     os.unlink(wav_path)  # transcript is the artifact; meeting audio is sensitive
     logger.info("transcribed -> %s (audio deleted)", transcript_path)
-    if generate_ata(transcript_path, Path(wav_path).name, seconds / 60):
+    ata_path = generate_ata(transcript_path, Path(wav_path).name, seconds / 60)
+    if ata_path:
+        try:
+            subprocess.run([ASSISTENTE_PY, ATAS_MEMORY, "ingest", ata_path],
+                           capture_output=True, text=True, timeout=120, check=True)
+            logger.info("ata indexed in grkmemory: %s", ata_path)
+        except Exception:
+            logger.exception("ata memory ingest failed (reindex later recovers)")
         notify(f"Reunião concluída ({seconds / 60:.0f} min) — ata enviada por email ✉️",
                subtitle=EMAIL_TO, open_path=ATAS_DIR)
     else:
