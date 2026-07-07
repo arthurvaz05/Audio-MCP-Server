@@ -7,12 +7,18 @@ LaunchAgent (com.monkai.meeting-watcher).
 """
 import datetime
 import logging
+import os
 import subprocess
 import time
+from pathlib import Path
 
 import recorder
 
 POLL_SECONDS = 10
+VENV_PYTHON = "/Users/arthurvaz/Audio-MCP-Server/.venv/bin/python3"
+CLAUDE_BIN = "/Users/arthurvaz/.local/bin/claude"
+ATAS_DIR = "/Users/arthurvaz/Desktop/Monkai/Assistente/data/atas"
+EMAIL_TO = "arthur.vaz@monkai.com.br"
 
 logger = logging.getLogger("watcher")
 
@@ -35,6 +41,72 @@ def notify(message: str, subtitle: str = "", open_path: str = "") -> None:
              f'display notification "{message}" with title "Gravador de Reunião"'],
             check=False, capture_output=True,
         )
+
+
+def transcribe(wav_path: str) -> str | None:
+    """Transcribe locally in a subprocess (frees the ~1.5 GB model RAM on exit;
+    no MCP tool timeout). Returns transcript path or None."""
+    transcript_path = wav_path.rsplit(".", 1)[0] + "_transcript.txt"
+    code = (
+        "import mlx_whisper, sys\n"
+        "r = mlx_whisper.transcribe(sys.argv[1], "
+        "path_or_hf_repo='mlx-community/whisper-large-v3-turbo', language='pt')\n"
+        "lines = [f\"[{int(s['start']//60):02d}:{int(s['start']%60):02d}] "
+        "{s['text'].strip()}\" for s in r['segments']]\n"
+        "open(sys.argv[2], 'w', encoding='utf-8').write('\\n'.join(lines))\n"
+    )
+    result = subprocess.run([VENV_PYTHON, "-c", code, wav_path, transcript_path],
+                            capture_output=True, text=True, timeout=1800)
+    if result.returncode != 0:
+        logger.error("transcription failed: %s", result.stderr[-500:])
+        return None
+    return transcript_path
+
+
+def generate_ata(transcript_path: str, wav_name: str, minutes: float) -> bool:
+    """Headless Claude: name the meeting from the ms365 calendar, write the
+    ata and email it. Returns True on success."""
+    prompt = f"""Voce e o assistente do Arthur. Uma reuniao acabou de ser gravada e transcrita automaticamente.
+
+Transcript: {transcript_path} (gravacao {wav_name}, {minutes:.0f} min — o timestamp YYYYMMDD_HHMMSS no nome do arquivo e o inicio da gravacao).
+
+Faca, sem pedir confirmacao:
+1. Leia o transcript.
+2. Busque no calendario ms365 (mcp__ms365__get-calendar-view) o evento que cobre o horario da gravacao; se achar, use o titulo dele como nome da reuniao; senao use "Reuniao" + data/hora.
+3. Escreva a ata em portugues (data/hora, participantes se identificaveis, resumo, pontos discutidos, decisoes, action items com responsaveis, proximos passos) e salve em {ATAS_DIR}/YYYY-MM-DD_<nome-curto>.md.
+4. Envie a ata por email para {EMAIL_TO} via mcp__ms365__send-mail — assunto "Ata de Reuniao - <nome> - DD/MM/AAAA", corpo HTML bem formatado.
+5. Responda apenas OK ou o erro."""
+    try:
+        result = subprocess.run(
+            [CLAUDE_BIN, "-p", prompt, "--allowedTools",
+             "Read,Write,mcp__ms365__get-calendar-view,mcp__ms365__send-mail"],
+            capture_output=True, text=True, timeout=900,
+            cwd="/Users/arthurvaz",  # projeto onde o MCP ms365 esta configurado
+            env={**os.environ, "PATH": os.environ.get("PATH", "") + ":/Users/arthurvaz/.local/bin"},
+        )
+        logger.info("claude ata run (rc=%d): %s", result.returncode, result.stdout[-300:])
+        return result.returncode == 0
+    except subprocess.TimeoutExpired:
+        logger.error("claude ata run timed out")
+        return False
+
+
+def process_recording(wav_path: str, seconds: float) -> None:
+    """Post-meeting pipeline: transcribe -> delete audio -> ata + email."""
+    transcript_path = transcribe(wav_path)
+    if not transcript_path:
+        notify("Falha na transcrição — áudio mantido em ~/Recordings",
+               open_path=str(recorder.RECORDINGS_DIR))
+        return
+    os.unlink(wav_path)  # transcript is the artifact; meeting audio is sensitive
+    logger.info("transcribed -> %s (audio deleted)", transcript_path)
+    if generate_ata(transcript_path, Path(wav_path).name, seconds / 60):
+        notify(f"Reunião concluída ({seconds / 60:.0f} min) — ata enviada por email ✉️",
+               subtitle=EMAIL_TO, open_path=ATAS_DIR)
+    else:
+        notify("Transcrição pronta, mas a ata/email falhou — peça a ata no Claude",
+               subtitle=Path(transcript_path).name,
+               open_path=str(recorder.RECORDINGS_DIR))
 
 
 def main() -> None:
@@ -60,10 +132,9 @@ def main() -> None:
                 st = rec.status()
                 logger.info("recording finished: %s", st)
                 if st["state"] == "done" and st["seconds"] > 30:
-                    notify(f"Gravação salva ({st['seconds'] / 60:.0f} min) — "
-                           "peça a ata no Claude",
-                           subtitle=f"~/Recordings/{rec.wav_path.name}",
-                           open_path=str(recorder.RECORDINGS_DIR))
+                    # ponytail: pipeline inline — watcher pausa o polling durante
+                    # transcricao/ata (reunioes simultaneas nao existem p/ 1 pessoa)
+                    process_recording(str(rec.wav_path), st["seconds"])
                 elif st["state"] == "error":
                     notify(f"Gravação falhou: {(st['error'] or '')[:80]}")
         except Exception:
