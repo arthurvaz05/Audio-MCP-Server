@@ -17,12 +17,24 @@ POLL_SECONDS = 10
 logger = logging.getLogger("watcher")
 
 
-def notify(message: str) -> None:
-    subprocess.run(
-        ["osascript", "-e",
-         f'display notification "{message}" with title "Gravador de Reunião"'],
-        check=False, capture_output=True,
-    )
+def notify(message: str, subtitle: str = "", open_path: str = "") -> None:
+    """Notification via terminal-notifier (own app identity — allow it in
+    Focus/DND to see banners during meetings; click opens the recordings
+    folder). Falls back to osascript if terminal-notifier is missing."""
+    cmd = ["terminal-notifier", "-title", "Gravador de Reunião",
+           "-message", message, "-sound", "default"]
+    if subtitle:
+        cmd += ["-subtitle", subtitle]
+    if open_path:
+        cmd += ["-open", f"file://{open_path}"]
+    try:
+        subprocess.run(cmd, check=False, capture_output=True, timeout=10)
+    except FileNotFoundError:
+        subprocess.run(
+            ["osascript", "-e",
+             f'display notification "{message}" with title "Gravador de Reunião"'],
+            check=False, capture_output=True,
+        )
 
 
 def main() -> None:
@@ -41,13 +53,17 @@ def main() -> None:
                     time.sleep(60)  # don't spam on persistent config errors
                     continue
                 logger.info("recording started: %s", rec.wav_path)
-                notify("Reunião do Teams detectada — gravando…")
+                notify(f"Gravando: {rec.wav_path.name}",
+                       subtitle="Salvando em ~/Recordings (clique para abrir)",
+                       open_path=str(recorder.RECORDINGS_DIR))
                 rec.join()  # recording auto-stops when the call ends
                 st = rec.status()
                 logger.info("recording finished: %s", st)
                 if st["state"] == "done" and st["seconds"] > 30:
                     notify(f"Gravação salva ({st['seconds'] / 60:.0f} min) — "
-                           "peça a ata no Claude")
+                           "peça a ata no Claude",
+                           subtitle=f"~/Recordings/{rec.wav_path.name}",
+                           open_path=str(recorder.RECORDINGS_DIR))
                 elif st["state"] == "error":
                     notify(f"Gravação falhou: {(st['error'] or '')[:80]}")
         except Exception:
