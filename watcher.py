@@ -77,7 +77,7 @@ Transcript: {transcript_path} (gravacao {wav_name}, {minutes:.0f} min — o time
 Faca, sem pedir confirmacao:
 1. Leia o transcript.
 2. Busque no calendario ms365 (mcp__ms365__get-calendar-view) o evento que cobre o horario da gravacao; se achar, use o titulo dele como nome da reuniao; senao use "Reuniao" + data/hora.
-3. Escreva a ata em portugues e salve em {ATAS_DIR}/YYYY-MM-DD_<nome-curto>.md, comecando OBRIGATORIAMENTE com frontmatter YAML:
+3. Escreva a ata em portugues e salve em {ATAS_DIR}/YYYY-MM-DD_<nome-curto>.md (nome-curto em kebab-case, SEM espacos), comecando OBRIGATORIAMENTE com frontmatter YAML:
 ---
 titulo: <titulo do evento ou "Reuniao">
 data: <YYYY-MM-DD HH:MM do inicio da gravacao>
