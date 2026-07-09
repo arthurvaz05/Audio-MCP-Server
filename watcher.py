@@ -22,6 +22,7 @@ ATAS_DIR = "/Users/arthurvaz/Desktop/Monkai/Assistente/data/atas"
 EMAIL_TO = "arthur.vaz@monkai.com.br"
 ATAS_MEMORY = "/Users/arthurvaz/Desktop/Monkai/Assistente/scripts/atas_memory.py"
 ASSISTENTE_PY = "/Users/arthurvaz/Desktop/Monkai/Assistente/.venv/bin/python3"
+MIN_UNIQUE_WORDS = 30  # measured: real meetings 252-1368 unique words, blips 4-6
 
 logger = logging.getLogger("watcher")
 
@@ -107,6 +108,20 @@ Depois do frontmatter: data/hora, resumo, pontos discutidos, decisoes, action it
         return None
 
 
+def has_speech(transcript_path: str) -> bool:
+    """True when the transcript holds real dialogue rather than silence.
+
+    Whisper hallucinates filler on a silent track ('Abertura', 'Fim', empty
+    segments), so neither line count nor duration proves speech — vocabulary
+    size does. A meeting that never happened repeats a handful of words.
+    """
+    words: set[str] = set()
+    for line in Path(transcript_path).read_text(encoding="utf-8").splitlines():
+        text = re.sub(r"^\[\d+:\d+\]\s*", "", line).strip()
+        words.update(w.lower() for w in text.split())
+    return len(words) >= MIN_UNIQUE_WORDS
+
+
 def process_recording(wav_path: str, seconds: float) -> None:
     """Post-meeting pipeline: transcribe -> delete audio -> ata + email."""
     transcript_path = transcribe(wav_path)
@@ -116,6 +131,13 @@ def process_recording(wav_path: str, seconds: float) -> None:
         return
     os.unlink(wav_path)  # transcript is the artifact; meeting audio is sensitive
     logger.info("transcribed -> %s (audio deleted)", transcript_path)
+    if not has_speech(transcript_path):
+        # Teams opens the same media sockets when merely gathering ICE candidates
+        # (pre-join, ringing, device test), so the recorder cannot tell those from
+        # a real call. Silence is the only honest proof: drop it, no ata, no email.
+        logger.info("no speech in %s — discarded", transcript_path)
+        os.unlink(transcript_path)
+        return
     ata_path = generate_ata(transcript_path, Path(wav_path).name, seconds / 60)
     if ata_path:
         try:
