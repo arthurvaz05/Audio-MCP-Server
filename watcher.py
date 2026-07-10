@@ -78,7 +78,7 @@ Transcript: {transcript_path} (gravacao {wav_name}, {minutes:.0f} min — o time
 Faca, sem pedir confirmacao:
 1. Leia o transcript.
 2. Busque no calendario ms365 (mcp__ms365__get-calendar-view) o evento que cobre o horario da gravacao; se achar, use o titulo dele como nome da reuniao; senao use "Reuniao" + data/hora.
-3. Escreva a ata em portugues e salve em {ATAS_DIR}/YYYY-MM-DD_<nome-curto>.md (nome-curto em kebab-case, SEM espacos), comecando OBRIGATORIAMENTE com frontmatter YAML:
+3. Escreva a ata em portugues e salve em {ATAS_DIR}/YYYY-MM-DD_<nome-curto>.md (nome-curto em kebab-case, SEM espacos), seguindo EXATAMENTE este template — mesmos headings, mesma ordem, nada a mais nem a menos; secao sem conteudo recebe "Nenhum(a).":
 ---
 titulo: <titulo do evento ou "Reuniao">
 data: <YYYY-MM-DD HH:MM do inicio da gravacao>
@@ -87,7 +87,24 @@ produto: <produto MonkAI relacionado ou "geral">
 participantes: [<nomes identificaveis no transcript>]
 tags: [<3-8 tags do assunto>]
 ---
-Depois do frontmatter: data/hora, resumo, pontos discutidos, decisoes, action items com responsaveis, proximos passos.
+
+# Ata de Reunião — <titulo>
+
+**Data/hora:** DD/MM/AAAA, HH:MM (duração ~NN min)
+**Participantes:** <nomes ou "não identificados">
+**Cliente/Produto:** <cliente> / <produto>
+
+## Resumo
+
+## Pontos discutidos
+
+## Decisões
+
+## Action items
+
+## Próximos passos
+
+Observacoes sobre o template: action items com responsavel em negrito ("- **Nome:** acao"); notas excepcionais (audio ruim, gravacao substituida) entram como blockquote "> Nota: ..." logo apos a linha Cliente/Produto, sem criar heading novo; subsecoes "### N. Titulo" dentro de "Pontos discutidos" sao permitidas em reunioes longas.
 4. Envie a ata por email para {EMAIL_TO} via mcp__ms365__send-mail — assunto "Ata de Reuniao - <nome> - DD/MM/AAAA", corpo HTML bem formatado.
 5. Responda APENAS com o caminho absoluto do arquivo da ata salvo (nada mais)."""
     try:
