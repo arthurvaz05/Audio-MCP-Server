@@ -23,6 +23,7 @@ EMAIL_TO = "arthur.vaz@monkai.com.br"
 ATAS_MEMORY = "/Users/arthurvaz/Desktop/Monkai/Assistente/scripts/atas_memory.py"
 ASSISTENTE_PY = "/Users/arthurvaz/Desktop/Monkai/Assistente/.venv/bin/python3"
 MIN_UNIQUE_WORDS = 30  # measured: real meetings 252-1368 unique words, blips 4-6
+LONG_RECORDING_ALERT_SECONDS = 90 * 60  # nudge: a forgotten-open Teams call window keeps the recording alive forever (2026-07-13)
 
 logger = logging.getLogger("watcher")
 
@@ -171,6 +172,24 @@ def process_recording(wav_path: str, seconds: float) -> None:
                open_path=str(recorder.RECORDINGS_DIR))
 
 
+def wait_for_recording(rec) -> None:
+    """Block until the recording ends; nudge once if it runs suspiciously long.
+
+    A recording that outlives the meeting usually means the Teams call window
+    was left open (media sockets stay up, so the recorder never sees the call
+    end) — the user has to leave the call to unblock the ata pipeline.
+    """
+    warned = False
+    while rec.status()["state"] not in ("done", "error"):
+        rec.join(POLL_SECONDS)
+        if not warned and rec.status()["seconds"] >= LONG_RECORDING_ALERT_SECONDS:
+            warned = True
+            minutes = rec.status()["seconds"] / 60
+            logger.info("recording running for %.0f min — long-recording nudge", minutes)
+            notify(f"Gravando há {minutes:.0f} min — se a reunião já acabou, "
+                   "saia da call no Teams (a janela aberta mantém a gravação)")
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -196,7 +215,7 @@ def main() -> None:
                 notify(f"Gravando: {rec.wav_path.name}",
                        subtitle="Salvando em ~/Recordings (clique para abrir)",
                        open_path=str(recorder.RECORDINGS_DIR))
-                rec.join()  # recording auto-stops when the call ends
+                wait_for_recording(rec)  # auto-stops when the call ends; nudges if it never does
                 st = rec.status()
                 logger.info("recording finished: %s", st)
                 if st["state"] == "done" and st["seconds"] > 60:
