@@ -30,13 +30,13 @@ print("all detection tests passed")
 
 # Output routing: headphones must keep sound in the headphones while recording.
 from recorder import pick_multi_output
-WITH_FONE = ["MacBook Pro Speakers", "BlackHole 2ch", "Multi-Output Device",
+WITH_FONE = ["MacBook Pro Speakers", "BlackHole 2ch", "Multi-Output sem Fone",
              "Multi-Output Fone", "External Headphones"]
 NO_FONE = [d for d in WITH_FONE if d != "Multi-Output Fone"]
-assert pick_multi_output("MacBook Pro Speakers", WITH_FONE) == "Multi-Output Device"
-assert pick_multi_output("Multi-Output Device", WITH_FONE) == "Multi-Output Device"
-assert pick_multi_output("Multi-Output Fone", WITH_FONE) == "Multi-Output Device"  # stale from crash: safe default
+assert pick_multi_output("MacBook Pro Speakers", WITH_FONE) == "Multi-Output sem Fone"
+assert pick_multi_output("Multi-Output sem Fone", WITH_FONE) == "Multi-Output sem Fone"
+assert pick_multi_output("Multi-Output Fone", WITH_FONE) == "Multi-Output sem Fone"  # stale from crash: safe default
 assert pick_multi_output("External Headphones", WITH_FONE) == "Multi-Output Fone"
-assert pick_multi_output("External Headphones", NO_FONE) == "Multi-Output Device", "not created yet: old behavior"
-assert pick_multi_output("", WITH_FONE) == "Multi-Output Device", "SwitchAudioSource failed"
+assert pick_multi_output("External Headphones", NO_FONE) == "Multi-Output sem Fone", "not created yet: old behavior"
+assert pick_multi_output("", WITH_FONE) == "Multi-Output sem Fone", "SwitchAudioSource failed"
 print("all routing tests passed")

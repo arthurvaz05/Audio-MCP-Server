@@ -123,7 +123,7 @@ def list_outputs() -> list[str]:
         return []
 
 
-DEFAULT_MULTI_OUTPUT = "Multi-Output Device"  # speakers + BlackHole
+DEFAULT_MULTI_OUTPUT = "Multi-Output sem Fone"  # speakers + BlackHole
 HEADPHONE_MULTI_OUTPUT = "Multi-Output Fone"   # headphones + BlackHole
 
 

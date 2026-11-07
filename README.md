@@ -149,7 +149,7 @@ If audio playback isn't working:
 ### Recording meetings with headphones
 
 The meeting recorder captures call audio through BlackHole by switching the
-output to a Multi-Output device. `Multi-Output Device` = speakers + BlackHole.
+output to a Multi-Output device. `Multi-Output sem Fone` = speakers + BlackHole.
 For headphones, create a second one in Audio MIDI Setup named exactly
 `Multi-Output Fone` = headphones (primary/clock) + BlackHole 2ch (drift
 correction on). When the current output is not the speakers, the recorder uses
