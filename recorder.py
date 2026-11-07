@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Meeting recorder core: Teams call detection + streaming WAV recording.
+"""Meeting recorder core: Teams/Chrome call detection + streaming WAV recording.
 
 Shared by the MCP server (audio_server.py) and the background watcher
 (watcher.py). A PID lock file guarantees at most one recording per machine,
@@ -30,7 +30,7 @@ CALL_CHECK_SECONDS = 10
 STOP_AFTER_MISSES = 3  # ~30s without media before concluding the call ended
 
 
-# ---------- Teams call detection ----------
+# ---------- Call detection (Teams app + Chrome) ----------
 
 def count_media_sockets_from_lsof(lsof_output: str) -> int:
     """Pure parser: count UDP sockets bound to a concrete local IP.
@@ -50,12 +50,16 @@ def count_media_sockets_from_lsof(lsof_output: str) -> int:
     return media
 
 
-def count_teams_media_sockets() -> int:
-    """Count active RTP/media UDP sockets held by the Teams process family.
+# Apps whose calls we record: Teams desktop and Chrome (Meet, Teams web, any WebRTC call).
+CALL_APPS = ("Microsoft Teams.app", "Google Chrome.app")
 
-    Teams 2 opens media sockets in child helper processes (e.g. 'Microsoft
-    Teams ModuleHost'), NOT the top-level 'MSTeams' process, so we match the
-    whole Teams.app family by PID instead of `lsof -c MSTeams`.
+
+def count_app_media_sockets(app_path_pattern: str) -> int:
+    """Count active RTP/media UDP sockets held by one app's process family.
+
+    Apps open media sockets in helper processes (Teams 'ModuleHost', Chrome
+    network service), NOT the top-level process, so we match the whole .app
+    family by PID (`pgrep -f <App>.app`) instead of `lsof -c <name>`.
 
     Known limitation: on relay-only corporate networks (UDP blocked, media
     over TCP/TLS 443) this returns 0 during a call — callers must not treat
@@ -63,7 +67,7 @@ def count_teams_media_sockets() -> int:
     """
     try:
         pids = subprocess.run(
-            ["pgrep", "-f", "Microsoft Teams.app"],
+            ["pgrep", "-f", app_path_pattern],
             capture_output=True, text=True, timeout=5
         ).stdout.split()
         if not pids:
@@ -74,12 +78,17 @@ def count_teams_media_sockets() -> int:
         )
         return count_media_sockets_from_lsof(result.stdout)
     except (subprocess.TimeoutExpired, FileNotFoundError):
-        logger.exception("Teams media socket probe failed")
+        logger.exception("media socket probe failed for %s", app_path_pattern)
         return 0
 
 
-def is_teams_in_call() -> bool:
-    return count_teams_media_sockets() > 0
+def count_call_media_sockets() -> int:
+    """Media sockets across all CALL_APPS (Teams + Chrome)."""
+    return sum(count_app_media_sockets(app) for app in CALL_APPS)
+
+
+def is_in_call() -> bool:
+    return count_call_media_sockets() > 0
 
 
 # ---------- Audio device helpers ----------
@@ -238,16 +247,16 @@ class MeetingRecorder:
 
     def _run(self) -> None:
         try:
-            if self.auto_stop and not is_teams_in_call():
+            if self.auto_stop and not is_in_call():
                 self.state = "waiting_call"
                 deadline = time.monotonic() + self.wait_minutes * 60
-                while not is_teams_in_call():
+                while not is_in_call():
                     if self._stop.is_set():
                         self.state = "done"
                         return
                     if time.monotonic() > deadline:
                         self.state = "error"
-                        self.error = (f"No Teams call detected in {self.wait_minutes:.0f} min. "
+                        self.error = (f"No Teams or Chrome call detected in {self.wait_minutes:.0f} min. "
                                       "On networks where Teams media runs over TCP/443 "
                                       "(relay-only) detection cannot work — use auto_stop=False.")
                         return
@@ -293,8 +302,8 @@ class MeetingRecorder:
 
                     if self.auto_stop and time.monotonic() >= next_check:
                         next_check = time.monotonic() + CALL_CHECK_SECONDS
-                        n = count_teams_media_sockets()
-                        logger.info("teams media sockets: %d", n)
+                        n = count_call_media_sockets()
+                        logger.info("call media sockets: %d", n)
                         # Hysteresis: ICE renegotiation dips the count mid-call,
                         # so only stop after several consecutive empty reads.
                         if n > 0:

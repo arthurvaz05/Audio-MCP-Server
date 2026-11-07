@@ -142,7 +142,7 @@ async def start_meeting_recording(name: str = "meeting", auto_stop: bool = True,
 
     Args:
         name: Name for the recording file (default: "meeting")
-        auto_stop: Stop automatically when the Teams call ends (default: True).
+        auto_stop: Stop automatically when the Teams or Chrome call ends (default: True).
             Use False for non-Teams meetings (Meet/Zoom) or relay-only corporate
             networks where Teams media runs over TCP/443 and cannot be detected.
         wait_minutes: With auto_stop, how long to wait for a call to start (default: 5)
@@ -159,7 +159,7 @@ async def start_meeting_recording(name: str = "meeting", auto_stop: bool = True,
         if error:
             return f"Error: {error}"
         _current = rec
-        mode = ("auto-stop when the Teams call ends"
+        mode = ("auto-stop when the Teams or Chrome call ends"
                 if auto_stop else f"fixed {max_hours:g}h limit or manual stop")
         return (f"Recording started in background ({mode}). File: {rec.wav_path}. "
                 "Use recording_status to check on it.")

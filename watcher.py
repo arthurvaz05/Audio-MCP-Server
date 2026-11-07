@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Background watcher: auto-record Teams meetings (Granola-style).
 
-Polls for an active Teams call; when one starts and nothing else is recording
+Polls for an active Teams or Chrome call; when one starts and nothing else is recording
 (recorder lock), records it and shows a macOS notification. Runs as a
 LaunchAgent (com.monkai.meeting-watcher).
 """
@@ -178,7 +178,7 @@ def main() -> None:
     positives = 0  # consecutive polls seeing a call — Teams blips open sockets
     while True:    # for ~10s without a real call; require 2 (~20s) to start
         try:
-            if recorder.LOCK_FILE.exists() or not recorder.is_teams_in_call():
+            if recorder.LOCK_FILE.exists() or not recorder.is_in_call():
                 positives = 0
             else:
                 positives += 1

@@ -40,3 +40,23 @@ assert pick_multi_output("External Headphones", WITH_FONE) == "Multi-Output Fone
 assert pick_multi_output("External Headphones", NO_FONE) == "Multi-Output sem Fone", "not created yet: old behavior"
 assert pick_multi_output("", WITH_FONE) == "Multi-Output sem Fone", "SwitchAudioSource failed"
 print("all routing tests passed")
+
+# Call detection: Teams app OR Chrome (Meet / Teams web).
+import recorder
+# Real Chrome idle capture 2026-11-07: 8 sockets, all mDNS.
+CHROME_IDLE = "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n" + \
+    "Google 1330 arthurvaz 40u IPv4 0x1 0t0 UDP *:5353\n" * 8
+assert recorder.count_media_sockets_from_lsof(CHROME_IDLE) == 0, "idle Chrome counts 0"
+
+_real_probe = recorder.count_app_media_sockets
+calls = {}
+recorder.count_app_media_sockets = lambda pattern: calls.get(pattern, 0)  # boundary: lsof probe
+calls = {"Microsoft Teams.app": 0, "Google Chrome.app": 3}
+assert recorder.is_in_call(), "Chrome-only call"
+calls = {"Microsoft Teams.app": 4, "Google Chrome.app": 0}
+assert recorder.is_in_call(), "Teams-only call"
+calls = {}
+assert not recorder.is_in_call(), "idle"
+assert recorder.count_call_media_sockets() == 0
+recorder.count_app_media_sockets = _real_probe
+print("all call-detection tests passed")
