@@ -110,6 +110,37 @@ def get_current_output() -> str:
         return ""
 
 
+def list_outputs() -> list[str]:
+    """All macOS output device names."""
+    try:
+        result = subprocess.run(
+            ["SwitchAudioSource", "-a", "-t", "output"],
+            capture_output=True, text=True, check=True
+        )
+        return result.stdout.splitlines()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        logger.exception("SwitchAudioSource list failed")
+        return []
+
+
+DEFAULT_MULTI_OUTPUT = "Multi-Output Device"  # speakers + BlackHole
+HEADPHONE_MULTI_OUTPUT = "Multi-Output Fone"   # headphones + BlackHole
+
+
+def pick_multi_output(current: str, outputs: list[str]) -> str:
+    """Multi-Output to record through, keeping sound where the user hears it.
+
+    Speakers (or an existing Multi-Output) → the default speakers+BlackHole one.
+    Anything else (wired headphones, USB headset) → the headphones one, if the
+    user created it in Audio MIDI Setup; otherwise the default.
+    """
+    # ponytail: a single headphone Multi-Output; one per device if several headphones are used
+    on_speakers = not current or "Speakers" in current or current.startswith("Multi-Output")
+    if not on_speakers and HEADPHONE_MULTI_OUTPUT in outputs:
+        return HEADPHONE_MULTI_OUTPUT
+    return DEFAULT_MULTI_OUTPUT
+
+
 def find_recording_device() -> tuple[int | None, int]:
     """Find the recording device: (GLOBAL device index, channel count).
 
@@ -193,9 +224,10 @@ class MeetingRecorder:
             return f"Another recording is already in progress (see {LOCK_FILE})."
 
         self._original_output = get_current_output()
-        if not switch_audio_output("Multi-Output Device"):
+        multi_output = pick_multi_output(self._original_output, list_outputs())
+        if not switch_audio_output(multi_output):
             release_lock()
-            return ("Could not switch to Multi-Output Device. "
+            return (f"Could not switch to {multi_output}. "
                     "Make sure it is configured in Audio MIDI Setup.")
 
         self._device_index = device_index
