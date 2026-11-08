@@ -146,15 +146,36 @@ If audio playback isn't working:
 - Ensure the correct output device is selected
 - Try restarting the Claude Desktop application
 
-### Recording meetings with headphones
+### Meeting capture (Teams app + Chrome)
 
-The meeting recorder captures call audio through BlackHole by switching the
-output to a Multi-Output device. `Multi-Output sem Fone` = speakers + BlackHole.
-For headphones, create a second one in Audio MIDI Setup named exactly
-`Multi-Output Fone` = headphones (primary/clock) + BlackHole 2ch (drift
-correction on). When the current output is not the speakers, the recorder uses
-it automatically. In Teams, set Speaker to "System default", otherwise Teams
-plays straight to the headphones and bypasses BlackHole.
+The watcher auto-records calls in the Teams app and in Chrome (Google Meet,
+Teams web, any WebRTC call), detected by their UDP media sockets.
+
+**Primary path: process tap** (macOS 14.4+). `tap/tap-capture` (Swift, built
+automatically from `tap/main.swift` via `tap/build.sh`) records the default mic
++ the Teams/Chrome audio straight from those processes into the WAV. It never
+changes the output device, so Teams/Chrome can play to any speaker or
+headphones. It records itself because a tap read by another process is silent.
+
+One-time permission: System Settings → Privacy & Security → Screen & System
+Audio Recording → **System Audio Recording Only** → add and enable the app
+that runs the recorder (Terminal for manual runs; for the LaunchAgent, the
+`tap-capture` binary / Python if macOS lists them). Without it the tap records
+silence: the watcher then warns "Áudio da call não foi capturado".
+The helper is (re)built only when the watcher / MCP server starts, never during
+a recording. A rebuilt binary has a new code signature, so if the permission
+was granted to `tap-capture` itself, re-grant it after each rebuild.
+
+**Fallback: BlackHole.** If the helper cannot build, start, or report READY in
+10 s, the recorder switches the output to a Multi-Output with BlackHole and
+records the `Gravar Reunião` aggregate (mic + BlackHole), restoring the output
+afterwards. `Multi-Output sem Fone` = speakers + BlackHole; `Multi-Output Fone`
+= headphones (primary/clock) + BlackHole 2ch (drift correction on), used when
+the current output is not the speakers. On this path Teams' speaker must be
+the matching Multi-Output.
+
+Known limitations: the mic is the default input when recording starts;
+Chrome capture includes every Chrome tab's audio during the call.
 
 ### Server connectivity
 

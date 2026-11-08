@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Background watcher: auto-record Teams meetings (Granola-style).
 
-Polls for an active Teams call; when one starts and nothing else is recording
+Polls for an active Teams or Chrome call; when one starts and nothing else is recording
 (recorder lock), records it and shows a macOS notification. Runs as a
 LaunchAgent (com.monkai.meeting-watcher).
 """
@@ -139,8 +139,22 @@ def has_speech(transcript_path: str) -> bool:
     return len(words) >= MIN_UNIQUE_WORDS
 
 
-def process_recording(wav_path: str, seconds: float) -> None:
-    """Post-meeting pipeline: transcribe -> delete audio -> ata + email."""
+TAP_SILENT_PEAK = 0.001
+TAP_SILENT_MESSAGE = ("Áudio da call não foi capturado — confira a permissão "
+                      "Gravação de Áudio do Sistema")
+
+
+def tap_was_silent(st: dict) -> bool:
+    """Process-tap capture with no call-side signal (permission missing or helper died)."""
+    return st.get("capture") == "tap" and (st.get("tap_peak") or 0) < TAP_SILENT_PEAK
+
+
+def process_recording(wav_path: str, seconds: float, tap_silent: bool = False) -> None:
+    """Post-meeting pipeline: transcribe -> delete audio -> ata + email.
+
+    tap_silent: the call side was not captured; the mic-only ata is still
+    produced, but the user is warned to fix the System Audio permission.
+    """
     transcript_path = transcribe(wav_path)
     if not transcript_path:
         notify("Falha na transcrição — áudio mantido em ~/Recordings",
@@ -148,6 +162,11 @@ def process_recording(wav_path: str, seconds: float) -> None:
         return
     os.unlink(wav_path)  # transcript is the artifact; meeting audio is sensitive
     logger.info("transcribed -> %s (audio deleted)", transcript_path)
+    if tap_silent:
+        # Before the speech check: in a listen-only meeting the missing call audio
+        # is exactly why there is no speech, so the discard below must not hide it.
+        logger.error("process tap captured no call audio (only the mic) for %s", wav_path)
+        notify(TAP_SILENT_MESSAGE, open_path=str(recorder.RECORDINGS_DIR))
     if not has_speech(transcript_path):
         # Teams opens the same media sockets when merely gathering ICE candidates
         # (pre-join, ringing, device test), so the recorder cannot tell those from
@@ -175,10 +194,11 @@ def main() -> None:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     logger.info("meeting watcher started (poll every %ss)", POLL_SECONDS)
+    logger.info("process tap helper: %s", recorder.ensure_tap_helper() or "unavailable (BlackHole only)")
     positives = 0  # consecutive polls seeing a call — Teams blips open sockets
     while True:    # for ~10s without a real call; require 2 (~20s) to start
         try:
-            if recorder.LOCK_FILE.exists() or not recorder.is_teams_in_call():
+            if recorder.LOCK_FILE.exists() or not recorder.is_in_call():
                 positives = 0
             else:
                 positives += 1
@@ -202,7 +222,8 @@ def main() -> None:
                 if st["state"] == "done" and st["seconds"] > 60:
                     # ponytail: pipeline inline — watcher pausa o polling durante
                     # transcricao/ata (reunioes simultaneas nao existem p/ 1 pessoa)
-                    process_recording(str(rec.wav_path), st["seconds"])
+                    process_recording(str(rec.wav_path), st["seconds"],
+                                      tap_silent=tap_was_silent(st))
                 elif st["state"] == "done":
                     # blip/entrada-e-saida: sem conteudo de reuniao — descartar quieto
                     logger.info("short recording (%.0fs) discarded", st["seconds"])
