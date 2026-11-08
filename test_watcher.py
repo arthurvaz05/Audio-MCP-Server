@@ -44,3 +44,32 @@ check(SILENT, False, "whisper filler on silence is not speech")
 check(MIC_TEST, False, "mic test is not a meeting")
 check(REAL, True, "real meeting has speech")
 print("all no-speech guard tests passed")
+
+# Silent tap: the call side was not captured (permission missing) — warn the user.
+import watcher
+from watcher import TAP_SILENT_MESSAGE, tap_was_silent
+
+assert tap_was_silent({"capture": "tap", "tap_peak": 0.0})
+assert tap_was_silent({"capture": "tap", "tap_peak": None}), "helper died before DONE"
+assert not tap_was_silent({"capture": "tap", "tap_peak": 0.2})
+assert not tap_was_silent({"capture": "blackhole", "tap_peak": None})
+
+
+def run_pipeline(tap_silent: bool, transcript: str) -> list[str]:
+    tmp = Path(tempfile.mkdtemp())
+    wav = tmp / "reuniao.wav"
+    wav.write_bytes(b"")
+    txt = tmp / "reuniao.txt"
+    txt.write_text(transcript, encoding="utf-8")
+    notes: list[str] = []
+    watcher.transcribe = lambda path: str(txt)                  # boundary: whisper
+    watcher.generate_ata = lambda *a: None                      # boundary: claude CLI
+    watcher.notify = lambda msg, **kw: notes.append(msg)        # boundary: osascript
+    watcher.process_recording(str(wav), 120, tap_silent=tap_silent)
+    return notes
+
+
+assert TAP_SILENT_MESSAGE in run_pipeline(True, REAL), "silent tap + speech -> permission warning"
+assert TAP_SILENT_MESSAGE not in run_pipeline(False, REAL), "normal capture -> no warning"
+assert TAP_SILENT_MESSAGE not in run_pipeline(True, SILENT), "no speech at all -> discarded quietly"
+print("all tap-silence tests passed")

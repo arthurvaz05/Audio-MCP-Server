@@ -139,8 +139,22 @@ def has_speech(transcript_path: str) -> bool:
     return len(words) >= MIN_UNIQUE_WORDS
 
 
-def process_recording(wav_path: str, seconds: float) -> None:
-    """Post-meeting pipeline: transcribe -> delete audio -> ata + email."""
+TAP_SILENT_PEAK = 0.001
+TAP_SILENT_MESSAGE = ("Áudio da call não foi capturado — confira a permissão "
+                      "Gravação de Áudio do Sistema")
+
+
+def tap_was_silent(st: dict) -> bool:
+    """Process-tap capture with no call-side signal (permission missing or helper died)."""
+    return st.get("capture") == "tap" and (st.get("tap_peak") or 0) < TAP_SILENT_PEAK
+
+
+def process_recording(wav_path: str, seconds: float, tap_silent: bool = False) -> None:
+    """Post-meeting pipeline: transcribe -> delete audio -> ata + email.
+
+    tap_silent: the call side was not captured; the mic-only ata is still
+    produced, but the user is warned to fix the System Audio permission.
+    """
     transcript_path = transcribe(wav_path)
     if not transcript_path:
         notify("Falha na transcrição — áudio mantido em ~/Recordings",
@@ -155,6 +169,9 @@ def process_recording(wav_path: str, seconds: float) -> None:
         logger.info("no speech in %s — discarded", transcript_path)
         os.unlink(transcript_path)
         return
+    if tap_silent:
+        logger.error("process tap captured no call audio (only the mic) for %s", wav_path)
+        notify(TAP_SILENT_MESSAGE, open_path=str(recorder.RECORDINGS_DIR))
     ata_path = generate_ata(transcript_path, Path(wav_path).name, seconds / 60)
     if ata_path:
         try:
@@ -202,7 +219,8 @@ def main() -> None:
                 if st["state"] == "done" and st["seconds"] > 60:
                     # ponytail: pipeline inline — watcher pausa o polling durante
                     # transcricao/ata (reunioes simultaneas nao existem p/ 1 pessoa)
-                    process_recording(str(rec.wav_path), st["seconds"])
+                    process_recording(str(rec.wav_path), st["seconds"],
+                                      tap_silent=tap_was_silent(st))
                 elif st["state"] == "done":
                     # blip/entrada-e-saida: sem conteudo de reuniao — descartar quieto
                     logger.info("short recording (%.0fs) discarded", st["seconds"])
