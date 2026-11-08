@@ -117,10 +117,14 @@ class FakeStream:  # boundary: sounddevice input stream delivering 3-channel blo
         self.live = False
 recorder.sd.InputStream = FakeStream
 
-def run(helper):
+def no_build_during_call():
+    raise AssertionError("helper must never be (re)built inside a recording")
+recorder.ensure_tap_helper = no_build_during_call  # build happens at service startup only
+
+def run(helper, max_seconds=0.5):
     switches.clear()
-    recorder.ensure_tap_helper = lambda: helper   # boundary: swiftc build
-    r = recorder.MeetingRecorder(name="t", auto_stop=False, max_seconds=0.5)
+    recorder.TAP_HELPER = helper if helper else tmp / "missing-helper"   # boundary: built binary
+    r = recorder.MeetingRecorder(name="t", auto_stop=False, max_seconds=max_seconds)
     assert r.start() is None
     r.join(15)
     return r.status()
@@ -146,5 +150,29 @@ assert st["capture"] == "blackhole", st
 
 # test_no_helper_falls_back (build failed)
 st = run(None)
+assert st["capture"] == "blackhole", st
+
+# test_helper_dies_mid_call_keeps_recording_as_done: an early exit ends the take
+# like a call end, so the minutes already captured still get transcribed.
+DYING_HELPER = fake_helper(
+    "w = wave.open(sys.argv[1], 'wb'); w.setnchannels(1); w.setsampwidth(2); w.setframerate(48000)\n"
+    "w.writeframes(b'\\0\\0' * 4800); w.close()\n"
+    "print('READY tap_channels=2 rate=48000', flush=True); time.sleep(0.3); sys.exit(3)")
+st = run(DYING_HELPER, max_seconds=5)
+assert st["state"] == "done" and st["capture"] == "tap" and st["tap_peak"] is None, st
+
+# test_unlaunchable_helper_falls_back (present but not executable)
+broken = tmp / "not-executable"
+broken.write_text("x")
+broken.chmod(0o644)
+st = run(broken)
+assert st["state"] == "done" and st["capture"] == "blackhole", st
+
+# test_malformed_ready_falls_back
+st = run(fake_helper("print('READY tap_channels=x rate=48000', flush=True); time.sleep(60)"))
+assert st["capture"] == "blackhole", st
+
+# test_tap_without_channels_falls_back (tap did not join the aggregate)
+st = run(fake_helper("print('READY tap_channels=0 rate=48000', flush=True); time.sleep(60)"))
 assert st["capture"] == "blackhole", st
 print("all capture tests passed")

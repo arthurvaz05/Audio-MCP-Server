@@ -251,4 +251,5 @@ async def transcribe_audio(file_path: str, language: str = "pt",
 
 
 if __name__ == "__main__":
+    recorder.ensure_tap_helper()  # build once at startup, never mid-recording
     mcp.run(transport='stdio')

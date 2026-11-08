@@ -162,6 +162,11 @@ def process_recording(wav_path: str, seconds: float, tap_silent: bool = False) -
         return
     os.unlink(wav_path)  # transcript is the artifact; meeting audio is sensitive
     logger.info("transcribed -> %s (audio deleted)", transcript_path)
+    if tap_silent:
+        # Before the speech check: in a listen-only meeting the missing call audio
+        # is exactly why there is no speech, so the discard below must not hide it.
+        logger.error("process tap captured no call audio (only the mic) for %s", wav_path)
+        notify(TAP_SILENT_MESSAGE, open_path=str(recorder.RECORDINGS_DIR))
     if not has_speech(transcript_path):
         # Teams opens the same media sockets when merely gathering ICE candidates
         # (pre-join, ringing, device test), so the recorder cannot tell those from
@@ -169,9 +174,6 @@ def process_recording(wav_path: str, seconds: float, tap_silent: bool = False) -
         logger.info("no speech in %s — discarded", transcript_path)
         os.unlink(transcript_path)
         return
-    if tap_silent:
-        logger.error("process tap captured no call audio (only the mic) for %s", wav_path)
-        notify(TAP_SILENT_MESSAGE, open_path=str(recorder.RECORDINGS_DIR))
     ata_path = generate_ata(transcript_path, Path(wav_path).name, seconds / 60)
     if ata_path:
         try:
@@ -192,6 +194,7 @@ def main() -> None:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     logger.info("meeting watcher started (poll every %ss)", POLL_SECONDS)
+    logger.info("process tap helper: %s", recorder.ensure_tap_helper() or "unavailable (BlackHole only)")
     positives = 0  # consecutive polls seeing a call — Teams blips open sockets
     while True:    # for ~10s without a real call; require 2 (~20s) to start
         try:

@@ -182,8 +182,14 @@ TAP_STOP_TIMEOUT = 15   # seconds for the helper to finalize the WAV after SIGTE
 
 
 def ensure_tap_helper() -> Path | None:
-    """Path to a built helper, rebuilding it if missing or older than its source."""
-    if TAP_HELPER.exists() and TAP_HELPER.stat().st_mtime >= TAP_SOURCE.stat().st_mtime:
+    """Build the helper if missing or older than its source.
+
+    Call once at service startup (watcher / MCP server), never during a
+    recording: swiftc takes minutes, and a rebuilt binary has a new code
+    signature, so a System Audio permission granted to it must be re-granted.
+    """
+    if TAP_HELPER.exists() and (not TAP_SOURCE.exists()
+                                or TAP_HELPER.stat().st_mtime >= TAP_SOURCE.stat().st_mtime):
         return TAP_HELPER
     try:
         subprocess.run(["sh", str(TAP_DIR / "build.sh")], check=True,
@@ -217,12 +223,23 @@ def _read_line(proc: subprocess.Popen, timeout: float) -> str:
 
 def start_tap(helper: Path | None, wav_path: Path) -> subprocess.Popen | None:
     """Start the helper recording to wav_path; None (reason logged) if it is not READY."""
-    if helper is None:
+    if helper is None or not helper.exists():
+        logger.error("process tap helper not built — falling back to BlackHole")
         return None
-    proc = subprocess.Popen([str(helper), str(wav_path)], stdin=subprocess.PIPE,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        proc = subprocess.Popen([str(helper), str(wav_path)], stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    except OSError:
+        logger.exception("process tap helper could not be launched — falling back to BlackHole")
+        return None
     line = _read_line(proc, TAP_READY_TIMEOUT)
-    if (parse_tap_line(line) or {}).get("event") == "READY":
+    try:
+        info = parse_tap_line(line) or {}
+    except ValueError:
+        logger.exception("malformed helper line %r", line)
+        info = {}
+    # tap_channels == 0: the tap did not join the aggregate → mic-only; BlackHole does better.
+    if info.get("event") == "READY" and info.get("tap_channels", 0) > 0:
         logger.info("process tap recording: %s", line.strip())
         return proc
     proc.kill()
@@ -234,8 +251,14 @@ def start_tap(helper: Path | None, wav_path: Path) -> subprocess.Popen | None:
 
 def stop_tap(proc: subprocess.Popen) -> dict:
     """SIGTERM the helper and return its DONE info ({} if it did not finish cleanly)."""
-    proc.terminate()
-    info = parse_tap_line(_read_line(proc, TAP_STOP_TIMEOUT)) or {}
+    if proc.poll() is None:
+        proc.terminate()
+    line = _read_line(proc, TAP_STOP_TIMEOUT)  # dead helper: EOF returns at once
+    try:
+        info = parse_tap_line(line) or {}
+    except ValueError:
+        logger.exception("malformed helper line %r", line)
+        info = {}
     try:
         proc.wait(5)
     except subprocess.TimeoutExpired:
@@ -332,7 +355,7 @@ class MeetingRecorder:
                         return
                     self._stop.wait(10)
             self._next_check = time.monotonic() + CALL_CHECK_SECONDS
-            proc = start_tap(ensure_tap_helper(), self.wav_path)
+            proc = start_tap(TAP_HELPER, self.wav_path)  # built at service startup
             if proc:
                 self.capture = "tap"
                 self._record_tap(proc)
@@ -372,7 +395,11 @@ class MeetingRecorder:
         try:
             while not self._stop.is_set() and self.seconds_recorded < self.max_seconds:
                 if proc.poll() is not None:
-                    raise RuntimeError(f"process tap helper exited early (code {proc.returncode})")
+                    # Keep what was captured: end the take like a call end. tap_peak stays
+                    # None (no DONE line), so the watcher warns about the call audio.
+                    logger.error("process tap helper exited early (code %s) — keeping %.0fs recorded",
+                                 proc.returncode, self.seconds_recorded)
+                    break
                 if self._call_ended():
                     break
                 self._stop.wait(0.2)

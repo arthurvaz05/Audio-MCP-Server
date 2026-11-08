@@ -162,6 +162,9 @@ Audio Recording → **System Audio Recording Only** → add and enable the app
 that runs the recorder (Terminal for manual runs; for the LaunchAgent, the
 `tap-capture` binary / Python if macOS lists them). Without it the tap records
 silence: the watcher then warns "Áudio da call não foi capturado".
+The helper is (re)built only when the watcher / MCP server starts, never during
+a recording. A rebuilt binary has a new code signature, so if the permission
+was granted to `tap-capture` itself, re-grant it after each rebuild.
 
 **Fallback: BlackHole.** If the helper cannot build, start, or report READY in
 10 s, the recorder switches the output to a Multi-Output with BlackHole and

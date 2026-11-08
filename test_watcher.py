@@ -71,5 +71,8 @@ def run_pipeline(tap_silent: bool, transcript: str) -> list[str]:
 
 assert TAP_SILENT_MESSAGE in run_pipeline(True, REAL), "silent tap + speech -> permission warning"
 assert TAP_SILENT_MESSAGE not in run_pipeline(False, REAL), "normal capture -> no warning"
-assert TAP_SILENT_MESSAGE not in run_pipeline(True, SILENT), "no speech at all -> discarded quietly"
+# Listen-only meeting with headphones and no permission: the missing call audio
+# is WHY there is no speech, so the warning must still fire.
+assert TAP_SILENT_MESSAGE in run_pipeline(True, SILENT), "silent tap + no speech -> still warn"
+assert TAP_SILENT_MESSAGE not in run_pipeline(False, SILENT), "normal capture + no speech -> quiet discard"
 print("all tap-silence tests passed")
