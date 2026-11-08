@@ -159,9 +159,13 @@ headphones. It records itself because a tap read by another process is silent.
 
 One-time permission: System Settings → Privacy & Security → Screen & System
 Audio Recording → **System Audio Recording Only** → add and enable the app
-that runs the recorder (Terminal for manual runs; for the LaunchAgent, the
-`tap-capture` binary / Python if macOS lists them). Without it the tap records
-silence: the watcher then warns "Áudio da call não foi capturado".
+that runs the recorder. Measured 2026-11-08: for the LaunchAgent (launchd →
+Python → tap-capture) the grant that counts is the bare Homebrew binary
+`python3.11` (`/opt/homebrew/Cellar/python@3.11/<ver>/Frameworks/Python.framework/Versions/3.11/bin/python3.11`),
+not `Python.app`; macOS adds it to the list after the first attempt, then just
+switch it on. A `brew upgrade` of Python changes that path: re-grant. Terminal
+covers manual runs. Without it the tap records silence: the watcher then warns
+"Áudio da call não foi capturado".
 The helper is (re)built only when the watcher / MCP server starts, never during
 a recording. A rebuilt binary has a new code signature, so if the permission
 was granted to `tap-capture` itself, re-grant it after each rebuild.
