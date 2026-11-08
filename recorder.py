@@ -177,7 +177,7 @@ def find_recording_device() -> tuple[int | None, int]:
 TAP_DIR = Path(__file__).parent / "tap"
 TAP_HELPER = TAP_DIR / "tap-capture"
 TAP_SOURCE = TAP_DIR / "main.swift"
-TAP_READY_TIMEOUT = 10  # seconds for the helper to print READY
+TAP_READY_TIMEOUT = 8  # seconds for the helper to print READY
 TAP_STOP_TIMEOUT = 15   # seconds for the helper to finalize the WAV after SIGTERM
 
 
@@ -355,7 +355,9 @@ class MeetingRecorder:
                         return
                     self._stop.wait(10)
             self._next_check = time.monotonic() + CALL_CHECK_SECONDS
-            proc = start_tap(TAP_HELPER, self.wav_path)  # built at service startup
+            # Built at service startup. Core Audio intermittently gives a fresh tap no
+            # IO (measured 2026-11-08); a second helper process usually gets it.
+            proc = start_tap(TAP_HELPER, self.wav_path) or start_tap(TAP_HELPER, self.wav_path)
             if proc:
                 self.capture = "tap"
                 self._record_tap(proc)

@@ -172,6 +172,21 @@ assert st["state"] == "done" and st["capture"] == "blackhole", st
 st = run(fake_helper("print('READY tap_channels=x rate=48000', flush=True); time.sleep(60)"))
 assert st["capture"] == "blackhole", st
 
+# test_tap_retries_once_before_fallback: Core Audio intermittently delivers no IO
+# to a fresh tap (measured 2026-11-08); a second helper process usually works.
+FLAKY_MARK = tmp / "flaky-first-attempt"
+FLAKY_HELPER = fake_helper(
+    f"import os\nif not os.path.exists({str(FLAKY_MARK)!r}):\n"
+    f"    open({str(FLAKY_MARK)!r}, 'w').close(); print('ERROR no audio IO within 4s', flush=True); sys.exit(1)\n"
+    "w = wave.open(sys.argv[1], 'wb'); w.setnchannels(1); w.setsampwidth(2); w.setframerate(48000)\n"
+    "w.writeframes(b'\\0\\0' * 4800); w.close()\n"
+    "signal.signal(signal.SIGTERM, lambda *a: (print('DONE seconds=0.1 tap_peak=0.2500', flush=True), sys.exit(0)))\n"
+    "print('READY tap_channels=2 rate=48000', flush=True)\n"
+    "while True: time.sleep(0.05)")
+st = run(FLAKY_HELPER)
+assert st["capture"] == "tap" and st["tap_peak"] == 0.25, f"second attempt must be used: {st}"
+assert switches == [], "no fallback when the retry works"
+
 # test_tap_without_channels_falls_back (tap did not join the aggregate)
 st = run(fake_helper("print('READY tap_channels=0 rate=48000', flush=True); time.sleep(60)"))
 assert st["capture"] == "blackhole", st
