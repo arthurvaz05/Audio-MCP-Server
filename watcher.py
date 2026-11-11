@@ -105,12 +105,20 @@ tags: [<3-8 tags do assunto>]
 ## Próximos passos
 
 Observacoes sobre o template: action items com responsavel em negrito ("- **Nome:** acao"); notas excepcionais (audio ruim, gravacao substituida) entram como blockquote "> Nota: ..." logo apos a linha Cliente/Produto, sem criar heading novo; subsecoes "### N. Titulo" dentro de "Pontos discutidos" sao permitidas em reunioes longas.
-4. Envie a ata por email para {EMAIL_TO} via mcp__ms365__send-mail — assunto "Ata de Reuniao - <nome> - DD/MM/AAAA", corpo HTML bem formatado.
-5. Responda APENAS com o caminho absoluto do arquivo da ata salvo (nada mais)."""
+4. Gere a versao HTML da ata rodando: /Users/arthurvaz/Desktop/Monkai/Assistente/.venv/bin/python3 /Users/arthurvaz/Desktop/Monkai/Assistente/scripts/ata_to_html.py <caminho-da-ata.md> (escreve o .html ao lado e imprime o caminho; com --base64 imprime o conteudo do .html em base64).
+5. Envie a ata por email para {EMAIL_TO} com o HTML em anexo:
+   a. mcp__ms365__create-draft-email — assunto "Ata de Reuniao - <nome> - DD/MM/AAAA", corpo HTML bem formatado.
+   b. mcp__ms365__add-mail-attachment no draft — name = "<nome-do-arquivo>.html", contentBytes = saida do script com --base64.
+   c. mcp__ms365__send-draft-message.
+   Se o anexo falhar, envie sem anexo via mcp__ms365__send-mail (a ata no corpo ja basta).
+6. Responda APENAS com o caminho absoluto do arquivo da ata salvo (nada mais)."""
     try:
         result = subprocess.run(
             [CLAUDE_BIN, "-p", prompt, "--allowedTools",
-             "Read,Write,mcp__ms365__get-calendar-view,mcp__ms365__send-mail"],
+             "Read,Write,"
+             "Bash(/Users/arthurvaz/Desktop/Monkai/Assistente/.venv/bin/python3 /Users/arthurvaz/Desktop/Monkai/Assistente/scripts/ata_to_html.py:*),"
+             "mcp__ms365__get-calendar-view,mcp__ms365__create-draft-email,"
+             "mcp__ms365__add-mail-attachment,mcp__ms365__send-draft-message,mcp__ms365__send-mail"],
             capture_output=True, text=True, timeout=900,
             cwd="/Users/arthurvaz",  # projeto onde o MCP ms365 esta configurado
             env={**os.environ, "PATH": os.environ.get("PATH", "") + ":/Users/arthurvaz/.local/bin"},

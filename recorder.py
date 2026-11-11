@@ -26,8 +26,8 @@ RECORDINGS_DIR.mkdir(exist_ok=True)
 LOCK_FILE = RECORDINGS_DIR / ".recording.lock"
 
 SAMPLE_RATE = 44100
-CALL_CHECK_SECONDS = 10
-STOP_AFTER_MISSES = 3  # ~30s without media before concluding the call ended
+CALL_CHECK_SECONDS = 5
+STOP_AFTER_MISSES = 3  # ~15s without media before concluding the call ended
 
 
 # ---------- Call detection (Teams app + Chrome) ----------
