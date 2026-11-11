@@ -76,3 +76,16 @@ assert TAP_SILENT_MESSAGE not in run_pipeline(False, REAL), "normal capture -> n
 assert TAP_SILENT_MESSAGE in run_pipeline(True, SILENT), "silent tap + no speech -> still warn"
 assert TAP_SILENT_MESSAGE not in run_pipeline(False, SILENT), "normal capture + no speech -> quiet discard"
 print("all tap-silence tests passed")
+
+
+# Blip (call gone before MIN_MEETING_SECONDS): no 'Gravando' banner at all.
+import time
+banners: list[str] = []
+watcher.notify = lambda msg, **kw: banners.append(msg)
+watcher.announce_recording("blip.wav", delay=0.2).cancel()
+time.sleep(0.3)
+assert banners == [], "blip must not show the recording banner"
+t = watcher.announce_recording("real.wav", delay=0.05)
+t.join(1)
+assert banners == ["Gravando: real.wav"], banners
+print("all banner tests passed")
