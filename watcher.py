@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -22,6 +23,9 @@ ATAS_DIR = "/Users/arthurvaz/Desktop/Monkai/Assistente/data/atas"
 EMAIL_TO = "arthur.vaz@monkai.com.br"
 ATAS_MEMORY = "/Users/arthurvaz/Desktop/Monkai/Assistente/scripts/atas_memory.py"
 ASSISTENTE_PY = "/Users/arthurvaz/Desktop/Monkai/Assistente/.venv/bin/python3"
+# Teams opens media sockets for ~20s on pre-join/ringing/device test (measured
+# 2026-11-11: 38 of 187 triggers ended under 100s). Below this it is a blip.
+MIN_MEETING_SECONDS = 60
 MIN_UNIQUE_WORDS = 30  # measured: real meetings 252-1368 unique words, blips 4-6
 
 logger = logging.getLogger("watcher")
@@ -133,6 +137,19 @@ Observacoes sobre o template: action items com responsavel em negrito ("- **Nome
         return None
 
 
+def announce_recording(wav_name: str, delay: float = MIN_MEETING_SECONDS) -> threading.Timer:
+    """Show the 'Gravando' banner only once the call outlives a blip.
+
+    Caller cancels the timer when the recording ends, so blips stay silent.
+    """
+    timer = threading.Timer(delay, notify, args=(f"Gravando: {wav_name}",), kwargs={
+        "subtitle": "Salvando em ~/Recordings (clique para abrir)",
+        "open_path": str(recorder.RECORDINGS_DIR)})
+    timer.daemon = True
+    timer.start()
+    return timer
+
+
 def has_speech(transcript_path: str) -> bool:
     """True when the transcript holds real dialogue rather than silence.
 
@@ -221,13 +238,12 @@ def main() -> None:
                     time.sleep(60)  # don't spam on persistent config errors
                     continue
                 logger.info("recording started: %s", rec.wav_path)
-                notify(f"Gravando: {rec.wav_path.name}",
-                       subtitle="Salvando em ~/Recordings (clique para abrir)",
-                       open_path=str(recorder.RECORDINGS_DIR))
+                banner = announce_recording(rec.wav_path.name)
                 rec.join()  # recording auto-stops when the call ends
+                banner.cancel()
                 st = rec.status()
                 logger.info("recording finished: %s", st)
-                if st["state"] == "done" and st["seconds"] > 60:
+                if st["state"] == "done" and st["seconds"] > MIN_MEETING_SECONDS:
                     # ponytail: pipeline inline — watcher pausa o polling durante
                     # transcricao/ata (reunioes simultaneas nao existem p/ 1 pessoa)
                     process_recording(str(rec.wav_path), st["seconds"],
